@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Moodwave - Emotion Detection System</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap');
+
+    :root {
+      --bg: #050F1E;
+      --primary: #99D775;
+      --secondary: #6353CA;
+      --panel-blue: #1A4896;
+      --text-primary: #E8F4FF;
+      --text-muted: rgba(232,244,255,0.35);
+
+      --color-happy: #FFD700;
+      --color-angry: #FF3366;
+      --color-sad: #6699FF;
+      --color-fear: #CC44FF;
+      --color-neutral: #00C8FF;
+      --color-disgust: #44FF88;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-primary);
+      font-family: 'Share Tech Mono', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      overflow-x: hidden;
+      padding: 40px 20px;
+    }
+
+    /* Atmosphere Effects */
+    body::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-image: 
+        linear-gradient(rgba(153,215,117,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(153,215,117,0.04) 1px, transparent 1px);
+      background-size: 30px 30px;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0,0,0,0.15),
+        rgba(0,0,0,0.15) 1px,
+        transparent 1px,
+        transparent 2px
+      );
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .container {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      max-width: 800px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 30px;
+    }
+
+    /* Top Section */
+    .top-header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 10px;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .status-dot-wrap {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid var(--primary);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      background-color: var(--primary);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--primary);
+      animation: pulse-dot 2s infinite;
+    }
+
+    .status-text {
+      font-size: 14px;
+      color: var(--primary);
+      letter-spacing: 2px;
+    }
+
+    .title-emotion {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 900;
+      font-size: 64px;
+      line-height: 1;
+      color: var(--text-primary);
+      text-transform: capitalize;
+    }
+
+    .title-detection {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 900;
+      font-size: 56px;
+      line-height: 1;
+      text-transform: capitalize;
+      background: linear-gradient(to right, var(--color-neutral), var(--secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-top: -5px;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 16px;
+      margin-top: 15px;
+    }
+
+    /* Main Card */
+    .main-card {
+      width: 100%;
+      background: rgba(10, 15, 30, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 24px;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      transition: all 0.5s ease;
+    }
+
+    .mic-container {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      border: 2px solid rgba(153,215,117,0.3);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-bottom: 25px;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .mic-icon {
+      font-size: 36px;
+      filter: grayscale(100%) brightness(200%);
+    }
+
+    .mic-container.recording {
+      border-color: var(--color-angry);
+      box-shadow: 0 0 30px rgba(255,51,102,0.4);
+      animation: pulse-ring 1s infinite alternate;
+    }
+
+    .card-title {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 700;
+      font-size: 24px;
+      margin-bottom: 15px;
+      transition: all 0.3s ease;
+    }
+
+    .card-instructions {
+      text-align: center;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 30px;
+      transition: all 0.3s ease;
+      min-height: 40px; /* Space for transcription */
+    }
+
+    /* Waveform */
+    .canvas-container {
+      width: 100%;
+      height: 60px;
+      margin-bottom: 30px;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Button */
+    .start-btn {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(153,215,117,0.3);
+      color: var(--text-primary);
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 700;
+      font-size: 16px;
+      padding: 15px 40px;
+      border-radius: 30px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.3s ease;
+      outline: none;
+    }
+
+    .start-btn:hover {
+      background: rgba(153,215,117,0.1);
+      border-color: var(--primary);
+      box-shadow: 0 0 15px rgba(153,215,117,0.2);
+    }
+
+    .start-btn.recording {
+      border-color: var(--color-angry);
+      color: var(--color-angry);
+    }
+    
+    .start-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .play-icon {
+      font-size: 12px;
+    }
+
+    .corner-dot {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--color-sad); /* Blue dot */
+      border: 2px solid var(--text-primary);
+    }
+
+    /* Footer Text */
+    .footer-text {
+      color: var(--text-muted);
+      font-size: 14px;
+      letter-spacing: 2px;
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    /* Results Layout inside Card */
+    .results-grid {
+      display: none;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+      width: 100%;
+      margin-top: 20px;
+    }
+
+    .results-grid.visible {
+      display: grid;
+      animation: fade-in 0.5s ease;
+    }
+
+    @media (max-width: 600px) {
+      .results-grid.visible {
+        grid-template-columns: 1fr;
+      }
+      .title-emotion { font-size: 40px; }
+      .title-detection { font-size: 32px; }
+    }
+
+    /* Left Panel - Emotions */
+    .emotion-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      border-left: 2px solid transparent;
+      transition: all 0.3s ease;
+    }
+
+    .emotion-row.active {
+      background: rgba(255,255,255,0.03);
+    }
+
+    .emotion-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .emotion-name-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .emotion-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .emotion-name {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .emotion-pct {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .progress-track {
+      height: 2px;
+      background: rgba(255,255,255,0.1);
+      width: 100%;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      transition: width 1s ease;
+    }
+
+    /* Right Panel - Songs & Advice */
+    .right-results {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .song-card {
+      border: 1px solid var(--panel-blue);
+      background: transparent;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+
+    .song-track { font-size: 9px; color: var(--secondary); }
+    .song-title { font-size: 10px; color: var(--text-primary); opacity: 0.8; }
+    .song-link { font-size: 10px; color: var(--primary); }
+
+    .advice-box {
+      border: 1px solid rgba(99,83,202,0.3);
+      background: rgba(99,83,202,0.05);
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .advice-title { font-size: 9px; color: var(--secondary); letter-spacing: 1px; }
+    .advice-content { font-size: 10px; color: var(--text-primary); opacity: 0.8; line-height: 1.7; white-space: pre-line; }
+
+    /* Animations */
+    @keyframes pulse-dot {
+      0% { opacity: 0.4; box-shadow: 0 0 5px var(--primary); }
+      50% { opacity: 1; box-shadow: 0 0 15px var(--primary); }
+      100% { opacity: 0.4; box-shadow: 0 0 5px var(--primary); }
+    }
+
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 10px rgba(255,51,102,0.2); }
+      100% { box-shadow: 0 0 30px rgba(255,51,102,0.6); }
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-header">
+      <div class="status-indicator">
+        <div class="status-dot-wrap">
+          <div class="status-dot"></div>
+        </div>
+        <span class="status-text">NEURAL ANALYSIS ACTIVE</span>
+      </div>
+      <h1 class="title-emotion">Emotion</h1>
+      <h1 class="title-detection">Detection System</h1>
+      <p class="subtitle">Real-time speech & audio emotion recognition</p>
+    </div>
+
+    <div class="main-card" id="mainCard">
+      <div class="mic-container" id="micContainer">
+        <div class="mic-icon">🎙️</div>
+      </div>
+      <h2 class="card-title" id="cardTitle">Ready to Analyse</h2>
+      <p class="card-instructions" id="cardInstructions">
+        Speak naturally for up to 5 seconds.<br>
+        The system will detect your emotional state.
+      </p>
+      
+      <div class="canvas-container">
+        <canvas id="waveform"></canvas>
+      </div>
+
+      <button class="start-btn" id="startBtn">
+        <span class="play-icon" id="btnIcon">▶</span> <span id="btnText">Start Analysis</span>
+      </button>
+
+      <div class="results-grid" id="resultsGrid">
+        <div class="left-results" id="emotionList">
+          <!-- Emotion bars go here -->
+        </div>
+        <div class="right-results">
+          <div id="songList"></div>
+          <div class="advice-box">
+            <div class="advice-title">⚡ WHAT TO DO</div>
+            <div class="advice-content" id="adviceContent"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="corner-dot"></div>
+    </div>
+
+    <div class="footer-text">
+      CNN · MEL SPECTROGRAM · MFCC · 6-CLASS CLASSIFICATION
+    </div>
+  </div>
+
+  <script>
+    const EMOTIONS = [
+      { name: 'Happy', color: '#FFD700' },
+      { name: 'Angry', color: '#FF3366' },
+      { name: 'Sad', color: '#6699FF' },
+      { name: 'Fear', color: '#CC44FF' },
+      { name: 'Neutral', color: '#00C8FF' },
+      { name: 'Disgust', color: '#44FF88' }
+    ];
+
+    const ADVICE_STRINGS = {
+      'Happy': "Use this energy productively.\n→ Start something meaningful.\n→ Share positivity.\n→ Capture the moment.",
+      'Angry': "Pause before reacting.\n→ Take deep breaths (inhale 4s, exhale 6s).\n→ Walk away from the situation.\n→ Avoid decisions right now.",
+      'Sad': "Talk to someone you trust.\n→ Write your thoughts down.\n→ Listen to uplifting music.\n→ Do one small task.",
+      'Fear': "Slow your breathing.\n→ Ask: is this real or imagined?\n→ Break problems into small steps.\n→ Stay grounded in present.",
+      'Neutral': "Best time for deep work.\n→ Start something important.\n→ Avoid distractions.\n→ Plan clearly.",
+      'Disgust': "Step away from the trigger.\n→ Reset your environment.\n→ Shift focus.\n→ Avoid dwelling."
+    };
+
+    const MOCK_SONGS = {
+      'Happy': ['Walking On Sunshine', 'Happy', 'Good Vibrations'],
+      'Angry': ['Break Stuff', 'Killing In The Name', 'Given Up'],
+      'Sad': ['Someone Like You', 'Fix You', 'Breathe Me'],
+      'Fear': ['Echoes', 'Climbing Up The Walls', 'Lullaby'],
+      'Neutral': ['Weightless', 'Clair de Lune', 'Teardrop'],
+      'Disgust': ['Toxicity', 'The Pot', 'Schism']
+    };
+
+    const canvas = document.getElementById('waveform');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const btnText = document.getElementById('btnText');
+    const btnIcon = document.getElementById('btnIcon');
+    const micContainer = document.getElementById('micContainer');
+    const cardTitle = document.getElementById('cardTitle');
+    const cardInstructions = document.getElementById('cardInstructions');
+    const resultsGrid = document.getElementById('resultsGrid');
+    const emotionList = document.getElementById('emotionList');
+    const songList = document.getElementById('songList');
+    const adviceContent = document.getElementById('adviceContent');
+
+    let state = 'IDLE';
+    let waveParams = {
+      amplitude: 5,
+      frequency: 0.02,
+      speed: 0.03,
+      offset: 0,
+      color: '#1A4896', // Dark blue for idle
+      glow: 0,
+      opacity: 0.5
+    };
+
+    // Audio & Speech vars
+    let audioContext;
+    let audioProcessor;
+    let audioStream;
+    let audioData = [];
+    let recordTimeout;
+    
+    // Web Speech API
+    window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let finalTranscript = "";
+
+    if (window.SpeechRecognition) {
+      recognition = new window.SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      
+      recognition.onresult = (event) => {
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        cardInstructions.textContent = '"' + (finalTranscript + interimTranscript).trim() + '"';
+      };
+    }
+
+    function resizeCanvas() {
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    function drawWaveform() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const centerY = canvas.height / 2;
+
+      ctx.beginPath();
+      ctx.moveTo(0, centerY);
+
+      for (let x = 0; x < canvas.width; x++) {
+        let noise = state === 'RECORDING' ? (Math.random() - 0.5) * 8 : 0;
+        const y = centerY + Math.sin(x * waveParams.frequency + waveParams.offset) * waveParams.amplitude + noise;
+        ctx.lineTo(x, y);
+      }
+
+      ctx.strokeStyle = waveParams.color;
+      ctx.lineWidth = 2;
+      ctx.shadowBlur = waveParams.glow;
+      ctx.shadowColor = waveParams.color;
+      ctx.globalAlpha = waveParams.opacity;
+      ctx.stroke();
+
+      waveParams.offset += waveParams.speed;
+      requestAnimationFrame(drawWaveform);
+    }
+
+    function initEmotions() {
+      emotionList.innerHTML = '';
+      EMOTIONS.forEach(emo => {
+        const row = document.createElement('div');
+        row.className = 'emotion-row';
+        row.id = `row-${emo.name}`;
+        row.innerHTML = `
+          <div class="emotion-header">
+            <div class="emotion-name-wrap">
+              <div class="emotion-dot" style="background-color: ${emo.color}; box-shadow: 0 0 5px ${emo.color}"></div>
+              <div class="emotion-name">${emo.name}</div>
+            </div>
+            <div class="emotion-pct" id="pct-${emo.name}">0%</div>
+          </div>
+          <div class="progress-track">
+            <div class="progress-bar" id="bar-${emo.name}" style="background-color: ${emo.color}"></div>
+          </div>
+        `;
+        emotionList.appendChild(row);
+      });
+    }
+
+    startBtn.addEventListener('click', async () => {
+      if (state === 'IDLE' || state === 'RESULT') {
+        try {
+          audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        } catch (err) {
+          alert("Microphone access is required to use the Emotion Detection System.");
+          return;
+        }
+
+        state = 'RECORDING';
+        
+        micContainer.classList.add('recording');
+        micContainer.style.display = 'flex'; // Reset mic display if coming from RESULT
+        cardTitle.textContent = "Recording...";
+        cardTitle.style.color = "var(--color-angry)";
+        cardTitle.style.textShadow = 'none';
+        cardTitle.style.fontSize = "24px";
+        
+        cardInstructions.textContent = "Listening... speak now.";
+        
+        btnText.textContent = "Stop Analysis";
+        btnIcon.textContent = "⏹";
+        startBtn.classList.add('recording');
+        resultsGrid.classList.remove('visible');
+
+        waveParams = { amplitude: 25, frequency: 0.04, speed: 0.15, color: '#FF3366', glow: 15, opacity: 1 };
+
+        // Do NOT force sampleRate — Chrome ignores it and records at its native rate (usually 48000 Hz).
+        // We read the actual rate and send it to the backend so it can resample correctly.
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const actualSampleRate = audioContext.sampleRate;
+        console.log('[AUDIO] Browser recording at', actualSampleRate, 'Hz');
+        const source = audioContext.createMediaStreamSource(audioStream);
+        audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+        
+        audioData = [];
+        finalTranscript = "";
+        
+        if (recognition) {
+          try { recognition.start(); } catch(e) {}
+        }
+
+        audioProcessor.onaudioprocess = (e) => {
+          if (state === 'RECORDING') {
+            const channelData = e.inputBuffer.getChannelData(0);
+            audioData.push(new Float32Array(channelData));
+          }
+        };
+
+        source.connect(audioProcessor);
+        audioProcessor.connect(audioContext.destination);
+
+        // Auto-stop after 5 seconds
+        recordTimeout = setTimeout(() => {
+          if (state === 'RECORDING') stopRecording();
+        }, 5000);
+        
+      } else if (state === 'RECORDING') {
+        // Manual Stop
+        clearTimeout(recordTimeout);
+        stopRecording();
+      }
+    });
+
+    async function stopRecording() {
+      state = 'ANALYSING';
+      
+      // Stop UI
+      micContainer.classList.remove('recording');
+      btnText.textContent = "Processing...";
+      btnIcon.textContent = "⌛";
+      startBtn.disabled = true;
+      cardTitle.textContent = "Analysing Neural Data...";
+      cardTitle.style.color = "var(--primary)";
+      
+      if (recognition) {
+        try { recognition.stop(); } catch(e) {}
+      }
+
+      // Disconnect audio
+      if (audioProcessor) {
+        audioProcessor.disconnect();
+        audioProcessor.onaudioprocess = null;
+      }
+      if (audioStream) {
+        audioStream.getTracks().forEach(track => track.stop());
+      }
+      
+      waveParams = { amplitude: 15, frequency: 0.08, speed: 0.2, color: '#99D775', glow: 10, opacity: 0.8 };
+
+      // Flatten audio data
+      let totalLength = 0;
+      for (let chunk of audioData) {
+        totalLength += chunk.length;
+      }
+      let flattenedArray = new Float32Array(totalLength);
+      let offset = 0;
+      for (let chunk of audioData) {
+        flattenedArray.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      // Convert to standard Array for JSON
+      const signalArray = Array.from(flattenedArray);
+      // Capture the actual sample rate the browser used
+      const browserSR = audioContext ? audioContext.sampleRate : 48000;
+      console.log('[AUDIO] Sending', signalArray.length, 'samples at', browserSR, 'Hz to backend');
+
+      try {
+        const response = await fetch('/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ signal: signalArray, sample_rate: browserSR })
+        });
+        
+        if (!response.ok) throw new Error("Server error");
+        
+        const result = await response.json();
+        showResults(result);
+      } catch (err) {
+        console.error(err);
+        cardTitle.textContent = "Analysis Failed";
+        cardTitle.style.color = "var(--color-angry)";
+        btnText.textContent = "Try Again";
+        btnIcon.textContent = "↺";
+        startBtn.disabled = false;
+        startBtn.classList.remove('recording');
+        state = 'IDLE';
+        waveParams = { amplitude: 5, frequency: 0.02, speed: 0.03, color: '#1A4896', glow: 0, opacity: 0.5 };
+      }
+    }
+
+    function showResults(data) {
+      state = 'RESULT';
+      startBtn.disabled = false;
+      
+      micContainer.style.display = 'none'; // Hide mic
+      
+      startBtn.classList.remove('recording');
+      btnText.textContent = "New Analysis";
+      btnIcon.textContent = "↺";
+      
+      const winnerName = data.emotion;
+      const winner = EMOTIONS.find(e => e.name.toLowerCase() === winnerName.toLowerCase()) || EMOTIONS[0];
+
+      cardTitle.textContent = winner.name.toUpperCase();
+      cardTitle.style.color = winner.color;
+      cardTitle.style.textShadow = `0 0 20px ${winner.color}`;
+      cardTitle.style.fontSize = "48px";
+      
+      // If transcription is empty, show a fallback
+      if (!cardInstructions.textContent || cardInstructions.textContent === "Listening... speak now.") {
+        cardInstructions.textContent = '"[Speech unintelligible / No audio recorded]"';
+      }
+
+      waveParams = { amplitude: 10, frequency: 0.02, speed: 0.05, color: winner.color, glow: 10, opacity: 0.8 };
+
+      initEmotions();
+      resultsGrid.classList.add('visible');
+
+      // Setup bars based on API result
+      const confidences = data.all_scores;
+      for (let emoName in confidences) {
+        const emo = EMOTIONS.find(e => e.name.toLowerCase() === emoName.toLowerCase());
+        if (emo) {
+          const val = Math.round(confidences[emoName] * 100);
+          const row = document.getElementById(`row-${emo.name}`);
+          document.getElementById(`pct-${emo.name}`).textContent = `${val}%`;
+          
+          setTimeout(() => { document.getElementById(`bar-${emo.name}`).style.width = `${val}%`; }, 100);
+          
+          if (emo.name.toLowerCase() === winnerName.toLowerCase()) {
+            row.classList.add('active');
+            row.style.borderLeftColor = emo.color;
+          }
+        }
+      }
+
+      // Setup songs & advice
+      adviceContent.textContent = ADVICE_STRINGS[winner.name] || "Stay calm and reflect.";
+      songList.innerHTML = '';
+      const songs = MOCK_SONGS[winner.name] || MOCK_SONGS['Neutral'];
+      songs.forEach((songTitle, idx) => {
+        const card = document.createElement('div');
+        card.className = 'song-card';
+        card.innerHTML = `
+          <div class="song-track">TRACK 0${idx + 1}</div>
+          <div class="song-title">${songTitle}</div>
+          <div class="song-link">▶ youtube.com/watch...</div>
+        `;
+        songList.appendChild(card);
+      });
+    }
+
+    resizeCanvas();
+    initEmotions();
+    drawWaveform();
+  </script>
+</body>
+</html>

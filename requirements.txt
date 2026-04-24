@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+tensorflow-cpu
+librosa
+scikit-learn
+numpy
+pydantic
+python-multipart
