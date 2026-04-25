@@ -68,6 +68,7 @@ def preprocess(signal: np.ndarray, src_sr: int) -> np.ndarray:
 
     # Mean-center (exact match to training)
     signal = signal - np.mean(signal)
+    signal = np.clip(signal, -0.1, 0.1)  # match training clean_audio
 
     # Center crop / pad to exactly SAMPLES
     if len(signal) > SAMPLES:
@@ -145,4 +146,6 @@ async def predict_emotion(data: AudioData):
         "confidence": float(probs[idx]),
         "all_scores": confidences
     }
+
+
 

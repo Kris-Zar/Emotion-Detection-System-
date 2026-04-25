@@ -1,6 +1,6 @@
-fastapi
+﻿fastapi
 uvicorn[standard]
-tensorflow-cpu
+tensorflow-cpu==2.21.0
 librosa
 scikit-learn
 numpy
