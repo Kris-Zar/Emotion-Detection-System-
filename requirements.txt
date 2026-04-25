@@ -6,3 +6,4 @@ scikit-learn
 numpy
 pydantic
 python-multipart
+google-api-python-client

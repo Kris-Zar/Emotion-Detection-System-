@@ -21,9 +21,48 @@ N_FFT = 2048
 HOP_LENGTH = 512
 MAX_FRAMES = 150
 
+# ---------------- YOUTUBE CONFIG ----------------
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+
+EMOTION_TO_QUERY = {
+    "Angry":   "calm stress relief music",
+    "Sad":     "sad emotional hindi songs",
+    "Happy":   "happy upbeat party songs",
+    "Fear":    "relaxing meditation music",
+    "Disgust": "lofi chill beats",
+    "Neutral": "focus instrumental music"
+}
+
+def get_songs(emotion: str):
+    """Fetch top 3 YouTube songs for the detected emotion."""
+    if not YOUTUBE_API_KEY:
+        return []
+    try:
+        from googleapiclient.discovery import build
+        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        query = EMOTION_TO_QUERY.get(emotion, "lofi music")
+        request = youtube.search().list(
+            q=query,
+            part="snippet",
+            type="video",
+            maxResults=3
+        )
+        response = request.execute()
+        songs = []
+        for item in response.get("items", []):
+            title = item["snippet"]["title"]
+            video_id = item["id"]["videoId"]
+            songs.append({
+                "title": title,
+                "url": f"https://www.youtube.com/watch?v={video_id}"
+            })
+        return songs
+    except Exception as e:
+        print(f"[YOUTUBE ERROR] {e}")
+        return []
+
 app = FastAPI()
 
-# Allow GitHub Pages and localhost to call this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,25 +91,20 @@ def load_resources():
 
 class AudioData(BaseModel):
     signal: List[float]
-    sample_rate: int = 22050  # browser will tell us the actual sample rate
+    sample_rate: int = 22050
 
 def preprocess(signal: np.ndarray, src_sr: int) -> np.ndarray:
-    """Preprocess audio exactly like training code in main.ipynb."""
+    """Preprocess audio exactly like training code."""
     signal = np.array(signal, dtype=np.float32)
 
-    # If browser recorded at a different rate, resample to 22050
     if src_sr != SR:
         print(f"[PREPROCESS] Resampling from {src_sr} Hz to {SR} Hz ...")
         signal = librosa.resample(signal, orig_sr=src_sr, target_sr=SR)
 
-    # Trim silence
     signal, _ = librosa.effects.trim(signal, top_db=30)
-
-    # Mean-center (exact match to training)
     signal = signal - np.mean(signal)
-    signal = np.clip(signal, -0.1, 0.1)  # match training clean_audio
+    signal = np.clip(signal, -0.1, 0.1)
 
-    # Center crop / pad to exactly SAMPLES
     if len(signal) > SAMPLES:
         start = (len(signal) - SAMPLES) // 2
         signal = signal[start:start + SAMPLES]
@@ -80,30 +114,22 @@ def preprocess(signal: np.ndarray, src_sr: int) -> np.ndarray:
 
     signal = np.nan_to_num(signal).astype(np.float32)
 
-    # Mel spectrogram â†’ dB (96 bands)
     mel = librosa.feature.melspectrogram(
         y=signal, sr=SR, n_fft=N_FFT, hop_length=HOP_LENGTH, n_mels=N_MELS
     )
-    mel = librosa.power_to_db(mel)  # shape: (96, time)
+    mel = librosa.power_to_db(mel)
 
-    # MFCCs (40 coefficients)
-    mfcc = librosa.feature.mfcc(
-        y=signal, sr=SR, n_mfcc=N_MFCC
-    )  # shape: (40, time)
+    mfcc = librosa.feature.mfcc(y=signal, sr=SR, n_mfcc=N_MFCC)
 
-    # Concatenate â†’ (136, time)
     features = np.concatenate([mel, mfcc], axis=0)
 
-    # Pad / crop time dimension to MAX_FRAMES=150
     if features.shape[1] > MAX_FRAMES:
         features = features[:, :MAX_FRAMES]
     else:
         pad = MAX_FRAMES - features.shape[1]
         features = np.pad(features, ((0, 0), (0, pad)))
 
-    # Transpose â†’ (150, 136) then add channel â†’ (150, 136, 1)
     features = features.T[..., np.newaxis]
-
     print(f"[PREPROCESS] Final feature shape: {features.shape}")
     return features.astype(np.float32)
 
@@ -124,9 +150,8 @@ async def predict_emotion(data: AudioData):
 
     feat = preprocess(np.array(data.signal), data.sample_rate)
 
-    # Normalize using training stats
     feat_norm = (feat - mean) / (std + 1e-6)
-    feat_norm = np.expand_dims(feat_norm, axis=0)  # (1, 150, 136, 1)
+    feat_norm = np.expand_dims(feat_norm, axis=0)
 
     print(f"[PREDICT] feat_norm shape: {feat_norm.shape}")
 
@@ -139,13 +164,13 @@ async def predict_emotion(data: AudioData):
         for i, p in enumerate(probs)
     }
 
+    songs = get_songs(label)
+
     print(f"[PREDICT] Result: {label} ({float(probs[idx])*100:.1f}%)")
 
     return {
         "emotion": label,
         "confidence": float(probs[idx]),
-        "all_scores": confidences
+        "all_scores": confidences,
+        "songs": songs
     }
-
-
-

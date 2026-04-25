@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -371,7 +371,8 @@
 
     .song-track { font-size: 9px; color: var(--secondary); }
     .song-title { font-size: 10px; color: var(--text-primary); opacity: 0.8; }
-    .song-link { font-size: 10px; color: var(--primary); }
+    .song-link { font-size: 10px; color: var(--primary); text-decoration: none; }
+    .song-link:hover { text-decoration: underline; }
 
     .advice-box {
       border: 1px solid rgba(99,83,202,0.3);
@@ -418,7 +419,7 @@
 
     <div class="main-card" id="mainCard">
       <div class="mic-container" id="micContainer">
-        <div class="mic-icon">🎙️</div>
+        <div class="mic-icon">ðŸŽ™ï¸</div>
       </div>
       <h2 class="card-title" id="cardTitle">Ready to Analyse</h2>
       <p class="card-instructions" id="cardInstructions">
@@ -431,7 +432,7 @@
       </div>
 
       <button class="start-btn" id="startBtn">
-        <span class="play-icon" id="btnIcon">▶</span> <span id="btnText">Start Analysis</span>
+        <span class="play-icon" id="btnIcon">â–¶</span> <span id="btnText">Start Analysis</span>
       </button>
 
       <div class="results-grid" id="resultsGrid">
@@ -441,7 +442,7 @@
         <div class="right-results">
           <div id="songList"></div>
           <div class="advice-box">
-            <div class="advice-title">⚡ WHAT TO DO</div>
+            <div class="advice-title">âš¡ WHAT TO DO</div>
             <div class="advice-content" id="adviceContent"></div>
           </div>
         </div>
@@ -451,7 +452,7 @@
     </div>
 
     <div class="footer-text">
-      CNN · MEL SPECTROGRAM · MFCC · 6-CLASS CLASSIFICATION
+      CNN Â· MEL SPECTROGRAM Â· MFCC Â· 6-CLASS CLASSIFICATION
     </div>
   </div>
 
@@ -466,21 +467,12 @@
     ];
 
     const ADVICE_STRINGS = {
-      'Happy': "Use this energy productively.\n→ Start something meaningful.\n→ Share positivity.\n→ Capture the moment.",
-      'Angry': "Pause before reacting.\n→ Take deep breaths (inhale 4s, exhale 6s).\n→ Walk away from the situation.\n→ Avoid decisions right now.",
-      'Sad': "Talk to someone you trust.\n→ Write your thoughts down.\n→ Listen to uplifting music.\n→ Do one small task.",
-      'Fear': "Slow your breathing.\n→ Ask: is this real or imagined?\n→ Break problems into small steps.\n→ Stay grounded in present.",
-      'Neutral': "Best time for deep work.\n→ Start something important.\n→ Avoid distractions.\n→ Plan clearly.",
-      'Disgust': "Step away from the trigger.\n→ Reset your environment.\n→ Shift focus.\n→ Avoid dwelling."
-    };
-
-    const MOCK_SONGS = {
-      'Happy': ['Walking On Sunshine', 'Happy', 'Good Vibrations'],
-      'Angry': ['Break Stuff', 'Killing In The Name', 'Given Up'],
-      'Sad': ['Someone Like You', 'Fix You', 'Breathe Me'],
-      'Fear': ['Echoes', 'Climbing Up The Walls', 'Lullaby'],
-      'Neutral': ['Weightless', 'Clair de Lune', 'Teardrop'],
-      'Disgust': ['Toxicity', 'The Pot', 'Schism']
+      'Happy': "Use this energy productively.\nâ†’ Start something meaningful.\nâ†’ Share positivity.\nâ†’ Capture the moment.",
+      'Angry': "Pause before reacting.\nâ†’ Take deep breaths (inhale 4s, exhale 6s).\nâ†’ Walk away from the situation.\nâ†’ Avoid decisions right now.",
+      'Sad': "Talk to someone you trust.\nâ†’ Write your thoughts down.\nâ†’ Listen to uplifting music.\nâ†’ Do one small task.",
+      'Fear': "Slow your breathing.\nâ†’ Ask: is this real or imagined?\nâ†’ Break problems into small steps.\nâ†’ Stay grounded in present.",
+      'Neutral': "Best time for deep work.\nâ†’ Start something important.\nâ†’ Avoid distractions.\nâ†’ Plan clearly.",
+      'Disgust': "Step away from the trigger.\nâ†’ Reset your environment.\nâ†’ Shift focus.\nâ†’ Avoid dwelling."
     };
 
     const canvas = document.getElementById('waveform');
@@ -610,13 +602,13 @@
         cardInstructions.textContent = "Listening... speak now.";
         
         btnText.textContent = "Stop Analysis";
-        btnIcon.textContent = "⏹";
+        btnIcon.textContent = "â¹";
         startBtn.classList.add('recording');
         resultsGrid.classList.remove('visible');
 
         waveParams = { amplitude: 25, frequency: 0.04, speed: 0.15, color: '#FF3366', glow: 15, opacity: 1 };
 
-        // Do NOT force sampleRate — Chrome ignores it and records at its native rate (usually 48000 Hz).
+        // Do NOT force sampleRate â€” Chrome ignores it and records at its native rate (usually 48000 Hz).
         // We read the actual rate and send it to the backend so it can resample correctly.
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const actualSampleRate = audioContext.sampleRate;
@@ -659,7 +651,7 @@
       // Stop UI
       micContainer.classList.remove('recording');
       btnText.textContent = "Processing...";
-      btnIcon.textContent = "⌛";
+      btnIcon.textContent = "âŒ›";
       startBtn.disabled = true;
       cardTitle.textContent = "Analysing Neural Data...";
       cardTitle.style.color = "var(--primary)";
@@ -713,7 +705,7 @@
         cardTitle.textContent = "Analysis Failed";
         cardTitle.style.color = "var(--color-angry)";
         btnText.textContent = "Try Again";
-        btnIcon.textContent = "↺";
+        btnIcon.textContent = "â†º";
         startBtn.disabled = false;
         startBtn.classList.remove('recording');
         state = 'IDLE';
@@ -729,7 +721,7 @@
       
       startBtn.classList.remove('recording');
       btnText.textContent = "New Analysis";
-      btnIcon.textContent = "↺";
+      btnIcon.textContent = "â†º";
       
       const winnerName = data.emotion;
       const winner = EMOTIONS.find(e => e.name.toLowerCase() === winnerName.toLowerCase()) || EMOTIONS[0];
@@ -767,20 +759,26 @@
         }
       }
 
-      // Setup songs & advice
+      // Setup advice
       adviceContent.textContent = ADVICE_STRINGS[winner.name] || "Stay calm and reflect.";
+
+      // Setup songs from API (real YouTube links)
       songList.innerHTML = '';
-      const songs = MOCK_SONGS[winner.name] || MOCK_SONGS['Neutral'];
-      songs.forEach((songTitle, idx) => {
-        const card = document.createElement('div');
-        card.className = 'song-card';
-        card.innerHTML = `
-          <div class="song-track">TRACK 0${idx + 1}</div>
-          <div class="song-title">${songTitle}</div>
-          <div class="song-link">▶ youtube.com/watch...</div>
-        `;
-        songList.appendChild(card);
-      });
+      const songs = data.songs || [];
+      if (songs.length === 0) {
+        songList.innerHTML = '<div class="song-track" style="opacity:0.5">No songs available</div>';
+      } else {
+        songs.forEach((song, idx) => {
+          const card = document.createElement('div');
+          card.className = 'song-card';
+          card.innerHTML = `
+            <div class="song-track">TRACK 0${idx + 1}</div>
+            <div class="song-title">${song.title}</div>
+            <a class="song-link" href="${song.url}" target="_blank" rel="noopener noreferrer">&#9654; Open on YouTube</a>
+          `;
+          songList.appendChild(card);
+        });
+      }
     }
 
     resizeCanvas();
@@ -789,3 +787,4 @@
   </script>
 </body>
 </html>
+
