@@ -467,12 +467,12 @@
     ];
 
     const ADVICE_STRINGS = {
-      'Happy': "Use this energy productively.\nâ†’ Start something meaningful.\nâ†’ Share positivity.\nâ†’ Capture the moment.",
-      'Angry': "Pause before reacting.\nâ†’ Take deep breaths (inhale 4s, exhale 6s).\nâ†’ Walk away from the situation.\nâ†’ Avoid decisions right now.",
-      'Sad': "Talk to someone you trust.\nâ†’ Write your thoughts down.\nâ†’ Listen to uplifting music.\nâ†’ Do one small task.",
-      'Fear': "Slow your breathing.\nâ†’ Ask: is this real or imagined?\nâ†’ Break problems into small steps.\nâ†’ Stay grounded in present.",
-      'Neutral': "Best time for deep work.\nâ†’ Start something important.\nâ†’ Avoid distractions.\nâ†’ Plan clearly.",
-      'Disgust': "Step away from the trigger.\nâ†’ Reset your environment.\nâ†’ Shift focus.\nâ†’ Avoid dwelling."
+      'Happy': "Use this energy productively.\n→ Start something meaningful.\n→ Share positivity.\n→ Capture the moment.",
+      'Angry': "Pause before reacting.\n→ Take deep breaths (inhale 4s, exhale 6s).\n→ Walk away from the situation.\n→ Avoid decisions right now.",
+      'Sad': "Talk to someone you trust.\n→ Write your thoughts down.\n→ Listen to uplifting music.\n→ Do one small task.",
+      'Fear': "Slow your breathing.\n→ Ask: is this real or imagined?\n→ Break problems into small steps.\n→ Stay grounded in present.",
+      'Neutral': "Best time for deep work.\n→ Start something important.\n→ Avoid distractions.\n→ Plan clearly.",
+      'Disgust': "Step away from the trigger.\n→ Reset your environment.\n→ Shift focus.\n→ Avoid dwelling."
     };
 
     const canvas = document.getElementById('waveform');
@@ -693,7 +693,7 @@
         const response = await fetch('/predict', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ signal: signalArray, sample_rate: browserSR })
+          body: JSON.stringify({ signal: signalArray, sample_rate: browserSR, text: finalTranscript || "" })
         });
         
         if (!response.ok) throw new Error("Server error");
@@ -730,6 +730,11 @@
       cardTitle.style.color = winner.color;
       cardTitle.style.textShadow = `0 0 20px ${winner.color}`;
       cardTitle.style.fontSize = "48px";
+
+      // Show correction note if text sentiment changed the emotion
+      if (data.audio_emotion && data.audio_emotion.toLowerCase() !== winnerName.toLowerCase()) {
+        cardInstructions.textContent = `Audio detected: ${data.audio_emotion} → Corrected by speech: ${winnerName}`;
+      }
       
       // If transcription is empty, show a fallback
       if (!cardInstructions.textContent || cardInstructions.textContent === "Listening... speak now.") {
