@@ -1,181 +1,336 @@
 ﻿import os
-import pickle
+import sounddevice as sd
 import numpy as np
 import librosa
 import tensorflow as tf
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
+import pickle
+import whisper
+import soundfile as sf
+import json
+from datetime import datetime
+from googleapiclient.discovery import build
 
-# ---------------- CONFIG ----------------
-SR = 22050
-DURATION = 3
-SAMPLES = SR * DURATION
-MODEL_DIR = "saved_model"
+# =========================================================
+# YOUTUBE API KEY
+# =========================================================
+os.environ["YOUTUBE_API_KEY"] = "AIzaSyCO79K4HCf-vmTZ4bHw4e8fajHu0dY2rSU"
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
-N_MELS = 96
-N_MFCC = 40
-N_FFT = 2048
-HOP_LENGTH = 512
-MAX_FRAMES = 150
+if not YOUTUBE_API_KEY:
+    raise ValueError("YOUTUBE_API_KEY not found in environment variables")
 
-# ---------------- YOUTUBE CONFIG ----------------
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-EMOTION_TO_QUERY = {
-    "Angry":   "calm stress relief music",
-    "Sad":     "sad emotional hindi songs",
-    "Happy":   "happy upbeat party songs",
-    "Fear":    "relaxing meditation music",
+
+# =========================================================
+# CACHE SYSTEM
+# =========================================================
+CACHE_FILE = "yt_cache.json"
+
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_cache(cache):
+    with open(CACHE_FILE, "w") as f:
+        json.dump(cache, f, indent=2)
+
+yt_cache = load_cache()
+
+
+# =========================================================
+# LOAD MODEL + NORM (Bypassing SKLearn DLL Error!)
+# =========================================================
+model = tf.keras.models.load_model("saved_model/emotion_model.keras")
+
+# We completely removed encoder.pkl and sklearn to prevent the Windows DLL error!
+CLASSES = ['Angry', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad']
+
+with open("saved_model/norm.pkl", "rb") as f:
+    norm = pickle.load(f)
+
+mean, std = norm["mean"], norm["std"]
+
+# =========================================================
+# LOAD WHISPER
+# =========================================================
+whisper_model = whisper.load_model("base")
+
+# =========================================================
+# EMOTION CONFIGS
+# =========================================================
+emotion_to_query = {
+    "Angry": "calm stress relief music",
+    "Sad": "sad emotional hindi songs",
+    "Happy": "happy upbeat party songs",
+    "Fear": "relaxing meditation music",
     "Disgust": "lofi chill beats",
     "Neutral": "focus instrumental music"
 }
 
-def get_songs(emotion: str):
-    if not YOUTUBE_API_KEY:
-        print("[YOUTUBE] No API key set, skipping.")
-        return []
+emotion_to_action = {
+    "Angry": """You seem angry.
+-> Pause before reacting.
+-> Take deep breaths (inhale 4s, exhale 6s).
+-> Walk away from the situation.
+-> Avoid decisions right now.
+-> Release energy physically.""",
+
+    "Sad": """You seem sad.
+-> Talk to someone you trust.
+-> Write your thoughts down.
+-> Listen to uplifting music.
+-> Do one small task.
+-> Avoid isolation.""",
+
+    "Happy": """You seem happy.
+-> Use this energy productively.
+-> Start something meaningful.
+-> Share positivity.
+-> Capture the moment.
+-> Avoid wasting this state.""",
+
+    "Fear": """You seem anxious.
+-> Slow your breathing.
+-> Ask: is this real or imagined?
+-> Break problems into small steps.
+-> Stay grounded in present.
+-> Avoid overthinking.""",
+
+    "Disgust": """You seem uncomfortable.
+-> Step away from the trigger.
+-> Reset your environment.
+-> Shift focus.
+-> Avoid dwelling.
+-> Give your brain time.""",
+
+    "Neutral": """You are balanced.
+-> Best time for deep work.
+-> Start something important.
+-> Avoid distractions.
+-> Plan clearly.
+-> Maintain this state."""
+}
+
+# =========================================================
+# AUDIO CONFIG
+# =========================================================
+SR = 22050
+DURATION = 3
+SAMPLES = SR * DURATION
+
+N_MELS = 96
+N_MFCC = 40
+N_FFT = 2048
+HOP = 512
+MAX_FRAMES = 150
+
+# =========================================================
+# RECORD AUDIO
+# =========================================================
+def record_audio():
+    print("\n Recording... Speak now (3 sec)...")
+
+    audio = sd.rec(int(DURATION * SR),
+                   samplerate=SR,
+                   channels=1,
+                   dtype='float32')
+    sd.wait()
+
+    audio = audio.flatten()
+    path = "temp.wav"
+    sf.write(path, audio, SR)
+
+    print("Recording done")
+    return audio, path
+
+# =========================================================
+# SPEECH TO TEXT (FIXED - BYPASSES FFMPEG / WINERROR 4551)
+# =========================================================
+def speech_to_text(audio_array):
     try:
-        import socket
-        socket.setdefaulttimeout(8)  # 8 second timeout on network calls
-        from googleapiclient.discovery import build
-        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY, cache_discovery=False)
-        query = EMOTION_TO_QUERY.get(emotion, "lofi music")
-        request = youtube.search().list(
-            q=query, part="snippet", type="video", maxResults=3
-        )
-        response = request.execute()
-        songs = []
-        for item in response.get("items", []):
-            title = item["snippet"]["title"]
-            video_id = item["id"]["videoId"]
-            songs.append({"title": title, "url": f"https://www.youtube.com/watch?v={video_id}"})
-        print(f"[YOUTUBE] Fetched {len(songs)} songs for {emotion}")
-        return songs
+        # Whisper requires EXACTLY 16000 Hz audio
+        # We resample our 22050 Hz recording down to 16000 Hz using librosa
+        audio_16k = librosa.resample(audio_array, orig_sr=SR, target_sr=16000)
+        
+        # Passing the raw numpy array to whisper bypasses the ffmpeg.exe block!
+        result = whisper_model.transcribe(audio_16k)
+        text = result["text"].strip()
     except Exception as e:
-        print(f"[YOUTUBE ERROR] {type(e).__name__}: {e}")
-        return []
+        print("Whisper error:", e)
+        text = ""
 
-# ---------------- TEXT SENTIMENT ----------------
-POSITIVE_WORDS = {
-    "happy","joy","joyful","cheerful","delighted","pleased","glad","thrilled","ecstatic",
-    "blissful","merry","jolly","elated","overjoyed","euphoric","radiant","beaming",
-    "love","adore","cherish","dear","darling","sweetheart","beloved","fond","affection",
-    "caring","tender","warm","heart","hug","kiss","miss","romantic","crush",
-    "thanks","thank","grateful","thankful","appreciate","blessed","fortunate","lucky",
-    "excited","amazing","awesome","incredible","fantastic","wonderful","marvelous",
-    "spectacular","magnificent","extraordinary","phenomenal","outstanding","superb",
-    "brilliant","excellent","fabulous","glorious","splendid","wow","yay","hooray",
-    "beautiful","gorgeous","pretty","lovely","cute","handsome","stunning","elegant",
-    "charming","adorable","sweet","kind","gentle","generous","thoughtful","smart",
-    "brave","strong","confident","proud","inspiring","success","successful","win",
-    "won","winner","victory","achieve","achieved","accomplish","accomplished",
-    "congratulations","celebrate","enjoy","fun","laugh","smile","giggle","cheer",
-    "dance","sing","play","relax","peaceful","calm","comfort","comfortable","cozy",
-    "safe","secure","healthy","fresh","free","freedom","good","great","nice","fine",
-    "cool","perfect","best","better","super","top","ideal","right","helpful",
-    "friendly","pleasant","satisfied","content","fulfilled","hope","hopeful",
-    "optimistic","positive","bright","promise","faith","believe","trust","dream",
-    "yes","sure","okay","ok","alright","definitely","absolutely","totally","lol","haha"
+    print("\nTEXT:", text)
+    return text
+
+# =========================================================
+# 6-CLASS TEXT SENTIMENT SYSTEM
+# =========================================================
+HAPPY_WORDS = {
+    "happy", "joy", "joyful", "cheerful", "delighted", "pleased", "glad", "thrilled", "ecstatic", 
+    "blissful", "merry", "jolly", "elated", "overjoyed", "euphoric", "radiant", "beaming", "love", 
+    "adore", "cherish", "dear", "darling", "sweetheart", "beloved", "fond", "affection", "caring", 
+    "tender", "warm", "heart", "hug", "kiss", "miss", "romantic", "crush", "thanks", "thank", 
+    "grateful", "thankful", "appreciate", "blessed", "fortunate", "lucky", "privilege", "excited", 
+    "amazing", "awesome", "incredible", "fantastic", "wonderful", "marvelous", "spectacular", 
+    "magnificent", "extraordinary", "phenomenal", "outstanding", "superb", "brilliant", "excellent", 
+    "fabulous", "glorious", "splendid", "wow", "yay", "hooray", "woohoo", "hurray", "beautiful", 
+    "gorgeous", "pretty", "lovely", "cute", "handsome", "stunning", "elegant", "charming", "adorable", 
+    "sweet", "kind", "gentle", "generous", "thoughtful", "smart", "clever", "wise", "talented", 
+    "gifted", "brave", "strong", "confident", "proud", "inspiring", "success", "successful", "win", 
+    "won", "winner", "victory", "achieve", "achieved", "accomplish", "accomplished", "congratulations", 
+    "congrats", "celebrate", "celebration", "promotion", "graduated", "passed", "qualified", "enjoy", 
+    "enjoying", "fun", "laugh", "laughing", "smile", "smiling", "giggle", "cheer", "dance", "dancing", 
+    "sing", "singing", "play", "playing", "relax", "relaxing", "peaceful", "calm", "comfort", 
+    "comfortable", "cozy", "safe", "secure", "heal", "healthy", "fresh", "free", "freedom", "good", 
+    "great", "nice", "fine", "cool", "perfect", "best", "better", "super", "top", "ideal", "right", 
+    "correct", "fair", "worthy", "valuable", "useful", "helpful", "friendly", "pleasant", "satisfying", 
+    "satisfied", "content", "fulfilled", "complete", "enough", "hope", "hopeful", "optimistic", 
+    "positive", "bright", "promise", "promising", "faith", "believe", "trust", "dream", "wish", 
+    "desire", "forward", "progress", "improve", "improving", "growing", "bloom", "yep", "yeah", "yes", 
+    "sure", "okay", "ok", "alright", "definitely", "absolutely", "certainly", "exactly", "totally", 
+    "completely", "truly", "really", "honestly", "finally", "lol", "haha", "hehe"
 }
 
-NEGATIVE_WORDS = {
-    "angry","anger","mad","furious","rage","raging","irritated","annoyed","frustrated",
-    "outraged","livid","fuming","bitter","hostile","aggressive","violent",
-    "hate","hatred","despise","detest","loathe","resent","dislike","disgust",
-    "disgusting","disgusted","repulsive","revolting","gross","nasty","vile","toxic",
-    "sad","sadness","unhappy","depressed","depression","miserable","gloomy","melancholy",
-    "lonely","loneliness","alone","isolated","heartbroken","grief","grieve","mourn",
-    "sorrow","sorrowful","cry","crying","tears","weep","weeping","sob",
-    "fear","afraid","scared","terrified","frightened","panic","panicking","anxious",
-    "anxiety","nervous","worried","worry","dread","horror","horrified","shocked",
-    "tense","stressed","stress","overwhelmed","paranoid","nightmare",
-    "pain","painful","hurt","hurting","suffering","suffer","agony","ache","broken",
-    "sick","illness","disease","dying","death","dead","die","kill","murder","suicide",
-    "terrible","horrible","awful","dreadful","pathetic","worthless","useless",
-    "hopeless","helpless","powerless","weak","ugly","stupid","dumb","idiot","fool",
-    "lazy","careless","selfish","cruel","mean","rude","harsh","fake","liar","cheat",
-    "betrayed","betrayal","bad","worse","worst","wrong","mistake","fail","failed",
-    "failure","loss","lost","problem","trouble","impossible","unfair","unjust","evil",
-    "fight","argue","argument","scream","yell","shout","curse","blame","punish",
-    "revenge","threat","abuse","bully","harass","destroy","ruin","quit","reject",
-    "rejected","abandon","abandoned","damn","shut","ugh","crap","suck","sucks",
-    "trash","garbage","boring","bored","tired","exhausted","disappointed","regret",
-    "sorry","unfortunately","sadly","cannot","dont","wont"
+ANGRY_WORDS = {
+    "angry", "anger", "mad", "furious", "rage", "raging", "irritated", "irritating", "annoyed", 
+    "annoying", "frustrated", "frustrating", "outraged", "livid", "fuming", "bitter", "hostile", 
+    "aggressive", "violent", "explosive", "fight", "fighting", "argue", "arguing", "argument", 
+    "scream", "screaming", "yell", "yelling", "shout", "shouting", "curse", "cursing", "swear", 
+    "blame", "blaming", "punish", "punishment", "revenge", "threat", "threaten", "damn", "hell", 
+    "shut", "stop", "enough"
 }
 
-def get_text_sentiment(text: str) -> str:
+SAD_WORDS = {
+    "sad", "sadness", "unhappy", "depressed", "depression", "miserable", "gloomy", "melancholy", 
+    "lonely", "loneliness", "alone", "isolated", "heartbroken", "heartbreak", "grief", "grieve", 
+    "mourn", "mourning", "sorrow", "sorrowful", "cry", "crying", "tears", "weep", "weeping", "sob", 
+    "hopeless", "helpless", "powerless", "weak", "boring", "bored", "tired", "exhausted", "fed", 
+    "sick", "disappointed", "disappointing", "regret", "sorry", "unfortunately", "sadly"
+}
+
+FEAR_WORDS = {
+    "fear", "afraid", "scared", "terrified", "frightened", "panic", "panicking", "anxious", "anxiety", 
+    "nervous", "worried", "worry", "worrying", "dread", "dreading", "horror", "horrified", "shocking", 
+    "shocked", "startled", "tense", "stressed", "stress", "overwhelmed", "paranoid", "nightmare", 
+    "creepy", "spooky", "eerie", "coward"
+}
+
+DISGUST_WORDS = {
+    "hate", "hatred", "despise", "detest", "loathe", "resent", "dislike", "disgust", "disgusting", 
+    "disgusted", "repulsive", "revolting", "gross", "nasty", "vile", "toxic", "terrible", "horrible", 
+    "awful", "dreadful", "atrocious", "pathetic", "worthless", "useless", "pointless", "meaningless", 
+    "ugly", "stupid", "dumb", "idiot", "fool", "foolish", "lazy", "careless", "reckless", "selfish", 
+    "greedy", "cruel", "mean", "rude", "harsh", "cold", "fake", "liar", "cheat", "cheater", "betrayed", 
+    "betrayal", "bad", "worse", "worst", "wrong", "incorrect", "mistake", "error", "fail", "failed", 
+    "failure", "loss", "lost", "lose", "problem", "trouble", "difficult", "hard", "impossible", 
+    "unfair", "unjust", "corrupt", "evil", "wicked", "abuse", "abusing", "bully", "bullying", 
+    "harass", "destroy", "destroying", "ruin", "ruined", "wreck", "quit", "quitting", "surrender", 
+    "reject", "rejected", "rejection", "abandon", "abandoned", "ignore", "no", "nope", "never", 
+    "nothing", "nobody", "nowhere", "ugh", "crap", "suck", "sucks", "trash", "garbage"
+}
+
+def get_text_sentiment(text):
     if not text:
-        return "neutral"
+        return "Neutral"
+        
     words = set(text.lower().split())
-    pos_count = len(words & POSITIVE_WORDS)
-    neg_count = len(words & NEGATIVE_WORDS)
-    if pos_count > neg_count:
-        return "positive"
-    elif neg_count > pos_count:
-        return "negative"
-    return "neutral"
+    
+    # Calculate word overlaps for each sentiment
+    scores = {
+        "Happy": len(words & HAPPY_WORDS),
+        "Angry": len(words & ANGRY_WORDS),
+        "Sad": len(words & SAD_WORDS),
+        "Fear": len(words & FEAR_WORDS),
+        "Disgust": len(words & DISGUST_WORDS)
+    }
+    
+    max_score = max(scores.values())
+    
+    if max_score == 0:
+        return "Neutral"
+        
+    # Find which emotion got the highest score
+    for emotion, score in scores.items():
+        if score == max_score:
+            return emotion
 
-def correct_emotion(audio_emotion: str, text_sentiment: str, confidence: float) -> str:
+def correct_emotion(audio_emotion, text_sentiment, confidence):
+    # Only correct when model confidence is low
     if confidence > 0.50:
         return audio_emotion
-    if text_sentiment == "positive":
+
+    text_sentiment = text_sentiment.capitalize()
+
+    if text_sentiment == "Happy":
         if audio_emotion in ["Angry", "Sad", "Fear", "Disgust", "Neutral"]:
             return "Happy"
-    if text_sentiment == "negative":
-        if audio_emotion == "Happy":
+
+    if text_sentiment == "Angry":
+        if audio_emotion in ["Happy", "Neutral"]:
             return "Angry"
-        if audio_emotion == "Neutral":
+        if audio_emotion in ["Sad", "Fear", "Disgust"]:
+            return audio_emotion  
+
+    if text_sentiment == "Sad":
+        if audio_emotion in ["Happy", "Neutral"]:
             return "Sad"
-    if text_sentiment == "neutral":
+        if audio_emotion in ["Angry", "Fear", "Disgust"]:
+            return audio_emotion  
+
+    if text_sentiment == "Fear":
+        if audio_emotion in ["Happy", "Neutral"]:
+            return "Fear"
+        if audio_emotion in ["Angry", "Sad", "Disgust"]:
+            return audio_emotion
+
+    if text_sentiment == "Disgust":
+        if audio_emotion in ["Happy", "Neutral"]:
+            return "Disgust"
+        if audio_emotion in ["Angry", "Sad", "Fear"]:
+            return audio_emotion
+
+    if text_sentiment == "Neutral":
         if audio_emotion in ["Happy", "Angry", "Sad"]:
             return "Neutral"
+        if audio_emotion in ["Fear", "Disgust"]:
+            return audio_emotion 
+
     return audio_emotion
 
-# ---------------- APP SETUP ----------------
-app = FastAPI()
+# =========================================================
+# FEATURE EXTRACTION (FIXED - NO SKLEARN / NO DLL ERRORS)
+# =========================================================
+def custom_trim(y, top_db=30):
+    """Pure Numpy replacement for librosa.effects.trim to avoid sklearn DLL errors"""
+    if len(y) == 0:
+        return y
+    
+    # Calculate threshold based on top_db
+    ref_power = np.max(np.abs(y))
+    if ref_power == 0:
+        return y
+        
+    threshold = ref_power / (10.0 ** (top_db / 20.0))
+    
+    # Find indices where amplitude > threshold
+    non_silent_indices = np.where(np.abs(y) > threshold)[0]
+    
+    if len(non_silent_indices) > 0:
+        start_idx = non_silent_indices[0]
+        end_idx = non_silent_indices[-1]
+        return y[start_idx:end_idx+1]
+    else:
+        return y
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
-
-model = None
-encoder = None
-mean = None
-std = None
-
-@app.on_event("startup")
-def load_resources():
-    global model, encoder, mean, std
-    try:
-        model = tf.keras.models.load_model(os.path.join(MODEL_DIR, "emotion_model.keras"))
-        with open(os.path.join(MODEL_DIR, "encoder.pkl"), "rb") as f:
-            encoder = pickle.load(f)
-        with open(os.path.join(MODEL_DIR, "norm.pkl"), "rb") as f:
-            norm = pickle.load(f)
-            mean = norm["mean"]
-            std = norm["std"]
-        print(f"[STARTUP] Model loaded. Classes: {list(encoder.classes_)}")
-    except Exception as e:
-        print(f"[STARTUP ERROR] {e}")
-
-class AudioData(BaseModel):
-    signal: List[float]
-    sample_rate: int = 22050
-    text: Optional[str] = ""
-
-def preprocess(signal: np.ndarray, src_sr: int) -> np.ndarray:
-    signal = np.array(signal, dtype=np.float32)
-
-    if src_sr != SR:
-        signal = librosa.resample(signal, orig_sr=src_sr, target_sr=SR)
-
-    signal, _ = librosa.effects.trim(signal, top_db=30)
+def preprocess(signal):
+    # USE CUSTOM TRIM INSTEAD OF LIBROSA!
+    signal = custom_trim(signal, top_db=30)
     signal = signal - np.mean(signal)
 
     if len(signal) > SAMPLES:
@@ -187,82 +342,157 @@ def preprocess(signal: np.ndarray, src_sr: int) -> np.ndarray:
     signal = np.nan_to_num(signal).astype(np.float32)
 
     mel = librosa.feature.melspectrogram(
-        y=signal, sr=SR, n_fft=N_FFT, hop_length=HOP_LENGTH, n_mels=N_MELS
+        y=signal, sr=SR, n_fft=N_FFT,
+        hop_length=HOP, n_mels=N_MELS
     )
     mel = librosa.power_to_db(mel)
     mfcc = librosa.feature.mfcc(y=signal, sr=SR, n_mfcc=N_MFCC)
-    features = np.concatenate([mel, mfcc], axis=0)
 
-    if features.shape[1] > MAX_FRAMES:
-        features = features[:, :MAX_FRAMES]
+    feat = np.concatenate([mel, mfcc], axis=0)
+
+    if feat.shape[1] > MAX_FRAMES:
+        feat = feat[:, :MAX_FRAMES]
     else:
-        features = np.pad(features, ((0, 0), (0, MAX_FRAMES - features.shape[1])))
+        feat = np.pad(feat, ((0, 0), (0, MAX_FRAMES - feat.shape[1])))
 
-    features = features.T[..., np.newaxis]
-    print(f"[PREPROCESS] shape: {features.shape}")
-    return features.astype(np.float32)
+    feat = feat.T
+    feat = feat[..., np.newaxis]
 
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    with open("moodwave.html", "r", encoding="utf-8") as f:
-        return f.read()
+    return feat.astype(np.float32)
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok", "model_loaded": model is not None}
+# =========================================================
+# YOUTUBE SONG FETCH
+# =========================================================
+MAX_API_CALLS = 5
+api_call_count = 0
 
-@app.post("/predict")
-async def predict_emotion(data: AudioData):
-    # Top-level try/except so we NEVER return a 500
+def get_songs(emotion, text=""):
+
+    global api_call_count
+
     try:
-        global model, encoder, mean, std
+        base_query = emotion_to_query.get(emotion, "lofi music")
+        query = base_query
 
-        if model is None:
-            return JSONResponse(status_code=200, content={"error": "Model not loaded"})
+        if query in yt_cache:
+            return yt_cache[query]
 
-        print(f"[PREDICT] samples={len(data.signal)}, sr={data.sample_rate}, text='{data.text}'")
+        if api_call_count >= MAX_API_CALLS:
+            print("API disabled (quota protection)")
+            return yt_cache.get(query, [{
+                "title": "Offline fallback",
+                "url": "https://youtube.com"
+            }])
 
-        feat = preprocess(np.array(data.signal), data.sample_rate)
-        feat_norm = (feat - mean) / (std + 1e-6)
-        feat_norm = np.expand_dims(feat_norm, axis=0)
+        request = youtube.search().list(
+            q=query,
+            part="snippet",
+            type="video",
+            maxResults=5
+        )
 
-        probs = model.predict(feat_norm, verbose=0)[0]
-        idx = int(np.argmax(probs))
-        audio_emotion = encoder.inverse_transform([idx])[0]
-        confidence = float(probs[idx])
+        response = request.execute()
+        api_call_count += 1
 
-        text_sentiment = get_text_sentiment(data.text or "")
-        final_emotion = correct_emotion(audio_emotion, text_sentiment, confidence)
+        songs = []
 
-        confidences = {
-            encoder.inverse_transform([i])[0]: float(p)
-            for i, p in enumerate(probs)
-        }
+        for item in response["items"]:
+            title = item["snippet"]["title"]
+            video_id = item["id"]["videoId"]
+            url = f"https://www.youtube.com/watch?v={video_id}"
 
-        songs = get_songs(final_emotion)
+            songs.append({
+                "title": title,
+                "url": url
+            })
 
-        print(f"[PREDICT] audio={audio_emotion}, final={final_emotion}, conf={confidence:.2f}")
+        yt_cache[query] = songs
+        save_cache(yt_cache)
 
-        return {
-            "emotion": final_emotion,
-            "audio_emotion": audio_emotion,
-            "text_sentiment": text_sentiment,
-            "confidence": confidence,
-            "all_scores": confidences,
-            "songs": songs
-        }
+        return songs
 
     except Exception as e:
-        print(f"[PREDICT ERROR] {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
-        # Return 200 with error so frontend shows something useful
-        return JSONResponse(status_code=200, content={
-            "error": str(e),
-            "emotion": "Neutral",
-            "audio_emotion": "Neutral",
-            "text_sentiment": "neutral",
-            "confidence": 0.0,
-            "all_scores": {},
-            "songs": []
-        })
+        print("YouTube error:", e)
+
+        return yt_cache.get(query, [{
+            "title": "Offline fallback",
+            "url": "https://youtube.com"
+        }])
+
+# =========================================================
+# SAVE HISTORY
+# =========================================================
+def save_history(data):
+
+    if os.path.exists("history.json"):
+        with open("history.json", "r") as f:
+            history = json.load(f)
+    else:
+        history = []
+
+    history.append(data)
+
+    with open("history.json", "w") as f:
+        json.dump(history, f, indent=4)
+
+# =========================================================
+# MAIN PIPELINE
+# =========================================================
+def predict():
+
+    audio, path = record_audio()
+
+    feat = preprocess(audio)
+    feat = np.expand_dims(feat, axis=0)
+    feat = (feat - mean) / (std + 1e-6)
+
+    probs = model.predict(feat, verbose=0)[0]
+    idx = np.argmax(probs)
+
+    # Use our hardcoded classes to bypass sklearn DLL errors!
+    audio_emotion = CLASSES[idx]
+    confidence = float(probs[idx])
+
+    # Pass the raw audio array directly instead of the file path!
+    text = speech_to_text(audio)
+    text_sentiment = get_text_sentiment(text)
+    emotion = correct_emotion(audio_emotion, text_sentiment, confidence)
+
+    songs = get_songs(emotion, text)
+    action = emotion_to_action.get(emotion, "Take a break.")
+
+    result = {
+        "time": str(datetime.now()),
+        "emotion": str(emotion),
+        "audio_emotion": str(audio_emotion),
+        "text_sentiment": text_sentiment,
+        "confidence": round(confidence, 3),
+        "text": text,
+        "songs": songs,
+        "action": action
+    }
+
+    save_history(result)
+
+    print("\nFINAL RESULT")
+    print("---------------------------")
+    print(f"Time          : {result['time']}")
+    print(f"Audio Emotion : {result['audio_emotion']}")
+    print(f"Text Sentiment: {result['text_sentiment']}")
+    print(f"Final Emotion : {result['emotion']}")
+    if result['emotion'] != result['audio_emotion']:
+        print("(Corrected by text sentiment)")
+    print(f"Text          : {result['text']}")
+    print(f"Confidence    : {result['confidence']}")
+    print("\nRecommended Songs:")
+    for i, song in enumerate(result["songs"], 1):
+        print(f"{i}. {song['title']}")
+        print(f"   {song['url']}")
+
+    print("\nWhat you should do:")
+    print(result["action"])
+
+# =========================================================
+# RUN
+# =========================================================
+predict()
