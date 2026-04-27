@@ -1495,40 +1495,27 @@
 
 
       // Setup bars based on API result
-
-      const confidences = data.all_scores;
-
-      for (let emoName in confidences) {
-
-        const emo = EMOTIONS.find(e => e.name.toLowerCase() === emoName.toLowerCase());
-
-        if (emo) {
-
-          const val = Math.round(confidences[emoName] * 100);
-
-          const row = document.getElementById(`row-${emo.name}`);
-
-          document.getElementById(`pct-${emo.name}`).textContent = `${val}%`;
-
-          
-
-          setTimeout(() => { document.getElementById(`bar-${emo.name}`).style.width = `${val}%`; }, 100);
-
-          
-
-          if (emo.name.toLowerCase() === winnerName.toLowerCase()) {
-
-            row.classList.add('active');
-
-            row.style.borderLeftColor = emo.color;
-
+      console.log('[DEBUG] all_scores:', JSON.stringify(data.all_scores));
+      const confidences = data.all_scores || {};
+      EMOTIONS.forEach(function(emo) {
+        var score = confidences[emo.name];
+        if (score === undefined) {
+          // Try case-insensitive match
+          for (var k in confidences) {
+            if (k.toLowerCase() === emo.name.toLowerCase()) { score = confidences[k]; break; }
           }
-
         }
-
-      }
-
-
+        var val = score !== undefined ? Math.round(score * 100) : 0;
+        var pctEl = document.getElementById('pct-' + emo.name);
+        var barEl = document.getElementById('bar-' + emo.name);
+        var rowEl = document.getElementById('row-' + emo.name);
+        if (pctEl) pctEl.textContent = val + '%';
+        if (barEl) setTimeout(function(b, v){ return function(){ b.style.width = v + '%'; }; }(barEl, val), 200);
+        if (rowEl && emo.name.toLowerCase() === winnerName.toLowerCase()) {
+          rowEl.classList.add('active');
+          rowEl.style.borderLeftColor = emo.color;
+        }
+      });
 
       // Setup advice
 
