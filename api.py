@@ -3,8 +3,8 @@ import pickle
 import numpy as np
 import librosa
 import tensorflow as tf
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -35,10 +35,13 @@ EMOTION_TO_QUERY = {
 
 def get_songs(emotion: str):
     if not YOUTUBE_API_KEY:
+        print("[YOUTUBE] No API key set, skipping.")
         return []
     try:
+        import socket
+        socket.setdefaulttimeout(8)  # 8 second timeout on network calls
         from googleapiclient.discovery import build
-        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+        youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY, cache_discovery=False)
         query = EMOTION_TO_QUERY.get(emotion, "lofi music")
         request = youtube.search().list(
             q=query, part="snippet", type="video", maxResults=3
@@ -49,9 +52,10 @@ def get_songs(emotion: str):
             title = item["snippet"]["title"]
             video_id = item["id"]["videoId"]
             songs.append({"title": title, "url": f"https://www.youtube.com/watch?v={video_id}"})
+        print(f"[YOUTUBE] Fetched {len(songs)} songs for {emotion}")
         return songs
     except Exception as e:
-        print(f"[YOUTUBE ERROR] {e}")
+        print(f"[YOUTUBE ERROR] {type(e).__name__}: {e}")
         return []
 
 # ---------------- TEXT SENTIMENT ----------------
@@ -99,7 +103,7 @@ NEGATIVE_WORDS = {
     "revenge","threat","abuse","bully","harass","destroy","ruin","quit","reject",
     "rejected","abandon","abandoned","damn","shut","ugh","crap","suck","sucks",
     "trash","garbage","boring","bored","tired","exhausted","disappointed","regret",
-    "sorry","unfortunately","sadly","cannot","don't","won't"
+    "sorry","unfortunately","sadly","cannot","dont","wont"
 }
 
 def get_text_sentiment(text: str) -> str:
@@ -125,13 +129,9 @@ def correct_emotion(audio_emotion: str, text_sentiment: str, confidence: float) 
             return "Angry"
         if audio_emotion == "Neutral":
             return "Sad"
-        if audio_emotion in ["Angry", "Sad", "Fear", "Disgust"]:
-            return audio_emotion
     if text_sentiment == "neutral":
         if audio_emotion in ["Happy", "Angry", "Sad"]:
             return "Neutral"
-        if audio_emotion in ["Fear", "Disgust", "Neutral"]:
-            return audio_emotion
     return audio_emotion
 
 # ---------------- APP SETUP ----------------
@@ -152,33 +152,32 @@ std = None
 @app.on_event("startup")
 def load_resources():
     global model, encoder, mean, std
-    model = tf.keras.models.load_model(os.path.join(MODEL_DIR, "emotion_model.keras"))
-    with open(os.path.join(MODEL_DIR, "encoder.pkl"), "rb") as f:
-        encoder = pickle.load(f)
-    with open(os.path.join(MODEL_DIR, "norm.pkl"), "rb") as f:
-        norm = pickle.load(f)
-        mean = norm["mean"]
-        std = norm["std"]
-    print(f"[STARTUP] Model loaded. Input shape: {model.input_shape}")
-    print(f"[STARTUP] Classes: {list(encoder.classes_)}")
+    try:
+        model = tf.keras.models.load_model(os.path.join(MODEL_DIR, "emotion_model.keras"))
+        with open(os.path.join(MODEL_DIR, "encoder.pkl"), "rb") as f:
+            encoder = pickle.load(f)
+        with open(os.path.join(MODEL_DIR, "norm.pkl"), "rb") as f:
+            norm = pickle.load(f)
+            mean = norm["mean"]
+            std = norm["std"]
+        print(f"[STARTUP] Model loaded. Classes: {list(encoder.classes_)}")
+    except Exception as e:
+        print(f"[STARTUP ERROR] {e}")
 
 class AudioData(BaseModel):
     signal: List[float]
     sample_rate: int = 22050
-    text: Optional[str] = ""   # transcript from browser Web Speech API
+    text: Optional[str] = ""
 
 def preprocess(signal: np.ndarray, src_sr: int) -> np.ndarray:
-    """Preprocess audio to match new training pipeline (no clip, center crop)."""
     signal = np.array(signal, dtype=np.float32)
 
     if src_sr != SR:
-        print(f"[PREPROCESS] Resampling from {src_sr} Hz to {SR} Hz ...")
         signal = librosa.resample(signal, orig_sr=src_sr, target_sr=SR)
 
     signal, _ = librosa.effects.trim(signal, top_db=30)
     signal = signal - np.mean(signal)
 
-    # Center crop / pad to exactly SAMPLES (matches load_audio in training)
     if len(signal) > SAMPLES:
         start = (len(signal) - SAMPLES) // 2
         signal = signal[start:start + SAMPLES]
@@ -191,9 +190,7 @@ def preprocess(signal: np.ndarray, src_sr: int) -> np.ndarray:
         y=signal, sr=SR, n_fft=N_FFT, hop_length=HOP_LENGTH, n_mels=N_MELS
     )
     mel = librosa.power_to_db(mel)
-
     mfcc = librosa.feature.mfcc(y=signal, sr=SR, n_mfcc=N_MFCC)
-
     features = np.concatenate([mel, mfcc], axis=0)
 
     if features.shape[1] > MAX_FRAMES:
@@ -202,7 +199,7 @@ def preprocess(signal: np.ndarray, src_sr: int) -> np.ndarray:
         features = np.pad(features, ((0, 0), (0, MAX_FRAMES - features.shape[1])))
 
     features = features.T[..., np.newaxis]
-    print(f"[PREPROCESS] Final feature shape: {features.shape}")
+    print(f"[PREPROCESS] shape: {features.shape}")
     return features.astype(np.float32)
 
 @app.get("/", response_class=HTMLResponse)
@@ -216,44 +213,56 @@ async def health_check():
 
 @app.post("/predict")
 async def predict_emotion(data: AudioData):
-    global model, encoder, mean, std
+    # Top-level try/except so we NEVER return a 500
+    try:
+        global model, encoder, mean, std
 
-    print(f"[PREDICT] Signal length: {len(data.signal)}, SR: {data.sample_rate}, text: '{data.text}'")
+        if model is None:
+            return JSONResponse(status_code=200, content={"error": "Model not loaded"})
 
-    feat = preprocess(np.array(data.signal), data.sample_rate)
+        print(f"[PREDICT] samples={len(data.signal)}, sr={data.sample_rate}, text='{data.text}'")
 
-    # Normalize using saved training stats (supports both scalar and per-feature arrays)
-    feat_norm = (feat - mean) / (std + 1e-6)
-    feat_norm = np.expand_dims(feat_norm, axis=0)
+        feat = preprocess(np.array(data.signal), data.sample_rate)
+        feat_norm = (feat - mean) / (std + 1e-6)
+        feat_norm = np.expand_dims(feat_norm, axis=0)
 
-    print(f"[PREDICT] feat_norm shape: {feat_norm.shape}")
+        probs = model.predict(feat_norm, verbose=0)[0]
+        idx = int(np.argmax(probs))
+        audio_emotion = encoder.inverse_transform([idx])[0]
+        confidence = float(probs[idx])
 
-    probs = model.predict(feat_norm, verbose=0)[0]
-    idx = int(np.argmax(probs))
-    audio_emotion = encoder.inverse_transform([idx])[0]
-    confidence = float(probs[idx])
+        text_sentiment = get_text_sentiment(data.text or "")
+        final_emotion = correct_emotion(audio_emotion, text_sentiment, confidence)
 
-    # Text sentiment correction
-    text_sentiment = get_text_sentiment(data.text or "")
-    final_emotion = correct_emotion(audio_emotion, text_sentiment, confidence)
+        confidences = {
+            encoder.inverse_transform([i])[0]: float(p)
+            for i, p in enumerate(probs)
+        }
 
-    confidences = {
-        encoder.inverse_transform([i])[0]: float(p)
-        for i, p in enumerate(probs)
-    }
+        songs = get_songs(final_emotion)
 
-    songs = get_songs(final_emotion)
+        print(f"[PREDICT] audio={audio_emotion}, final={final_emotion}, conf={confidence:.2f}")
 
-    if final_emotion != audio_emotion:
-        print(f"[PREDICT] Corrected: {audio_emotion} -> {final_emotion} (text={text_sentiment})")
-    else:
-        print(f"[PREDICT] Result: {final_emotion} ({confidence*100:.1f}%)")
+        return {
+            "emotion": final_emotion,
+            "audio_emotion": audio_emotion,
+            "text_sentiment": text_sentiment,
+            "confidence": confidence,
+            "all_scores": confidences,
+            "songs": songs
+        }
 
-    return {
-        "emotion": final_emotion,
-        "audio_emotion": audio_emotion,
-        "text_sentiment": text_sentiment,
-        "confidence": confidence,
-        "all_scores": confidences,
-        "songs": songs
-    }
+    except Exception as e:
+        print(f"[PREDICT ERROR] {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return 200 with error so frontend shows something useful
+        return JSONResponse(status_code=200, content={
+            "error": str(e),
+            "emotion": "Neutral",
+            "audio_emotion": "Neutral",
+            "text_sentiment": "neutral",
+            "confidence": 0.0,
+            "all_scores": {},
+            "songs": []
+        })
