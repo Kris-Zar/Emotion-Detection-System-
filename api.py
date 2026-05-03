@@ -157,7 +157,7 @@ async def predict_emotion(data: AudioData):
         feat = preprocess(np.array(data.signal), data.sample_rate)
         print(f"[PREDICT] feat shape={feat.shape} min={feat.min():.3f} max={feat.max():.3f}")
         feat_norm = (feat - mean) / (std + 1e-6)
-        feat_norm = np.expand_dims(feat_norm, axis=0)
+        feat_norm = feat_norm.reshape(1, 150, 136, 1)
         print(f"[PREDICT] feat_norm shape={feat_norm.shape}")
         probs = model.predict(feat_norm, verbose=0)[0]
         print(f"[PREDICT] probs={[round(float(p),3) for p in probs]}")
