@@ -68,10 +68,21 @@ def get_text_sentiment(text):
     return "Neutral" if m == 0 else max(scores, key=scores.get)
 
 def correct_emotion(audio_emotion, text_sentiment, confidence):
-    if confidence > 0.50: return audio_emotion
+    # Trust audio model if confidence is reasonable
+    if confidence > 0.35: return audio_emotion
     ts = text_sentiment.capitalize()
-    mapping = {"Happy":["Angry","Sad","Fear","Disgust","Neutral"],"Angry":["Happy","Neutral"],"Sad":["Happy","Neutral"],"Fear":["Happy","Neutral"],"Disgust":["Happy","Neutral"],"Neutral":["Happy","Angry","Sad"]}
-    if ts in mapping and audio_emotion in mapping[ts]: return ts
+    # NEVER override when text is Neutral - most everyday speech has no emotional words
+    if ts == "Neutral": return audio_emotion
+    # Only correct on strong direct contradiction between text and audio
+    contradictions = {
+        "Happy":   ["Angry", "Disgust"],
+        "Angry":   ["Happy"],
+        "Sad":     ["Happy"],
+        "Fear":    ["Happy"],
+        "Disgust": ["Happy"],
+    }
+    if ts in contradictions and audio_emotion in contradictions[ts]:
+        return ts
     return audio_emotion
 
 def custom_trim(y, top_db=30):
