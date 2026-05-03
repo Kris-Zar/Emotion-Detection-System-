@@ -136,24 +136,40 @@ async def read_root():
 
 @app.get("/health")
 async def health_check():
-    return {"status":"ok","model_loaded": model is not None}
+    return {
+        "status": "ok",
+        "model_loaded": model is not None,
+        "norm_loaded": mean is not None and std is not None,
+        "classes": CLASSES
+    }
 
 @app.post("/predict")
 async def predict_emotion(data: AudioData):
     audio_emotion, confidence, confidences, final_emotion, text_sentiment = "Neutral", 0.0, {}, "Neutral", "Neutral"
+    predict_error = None
     try:
+        print(f"[PREDICT] START samples={len(data.signal)} sr={data.sample_rate}")
         if model is None:
-            raise RuntimeError("Model not loaded")
+            raise RuntimeError("Model not loaded - check startup logs")
+        if mean is None or std is None:
+            raise RuntimeError("norm.pkl not loaded - mean/std is None")
+        print(f"[PREDICT] mean type={type(mean)} shape={getattr(mean,'shape','scalar')}")
         feat = preprocess(np.array(data.signal), data.sample_rate)
-        feat_norm = np.expand_dims((feat - mean)/(std + 1e-6), axis=0)
+        print(f"[PREDICT] feat shape={feat.shape} min={feat.min():.3f} max={feat.max():.3f}")
+        feat_norm = (feat - mean) / (std + 1e-6)
+        feat_norm = np.expand_dims(feat_norm, axis=0)
+        print(f"[PREDICT] feat_norm shape={feat_norm.shape}")
         probs = model.predict(feat_norm, verbose=0)[0]
+        print(f"[PREDICT] probs={[round(float(p),3) for p in probs]}")
         idx = int(np.argmax(probs))
         audio_emotion = CLASSES[idx]
         confidence = float(probs[idx])
         confidences = {CLASSES[i]: float(p) for i, p in enumerate(probs)}
         print(f"[PREDICT] audio={audio_emotion} conf={confidence:.2f}")
     except Exception as e:
-        print(f"[PREDICT MODEL ERROR] {e}"); traceback.print_exc()
+        predict_error = str(e)
+        print(f"[PREDICT MODEL ERROR] {type(e).__name__}: {e}")
+        traceback.print_exc()
 
     try:
         text_sentiment = get_text_sentiment(data.text or "")
@@ -172,5 +188,6 @@ async def predict_emotion(data: AudioData):
         "confidence": confidence,
         "all_scores": confidences,
         "songs": songs,
-        "action": action
+        "action": action,
+        "debug_error": predict_error
     }
