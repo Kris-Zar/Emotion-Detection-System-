@@ -1395,6 +1395,14 @@
         
 
         if (!response.ok) throw new Error("Server error");
+        
+        const result = await response.json();
+        
+        // Show python error if backend crashed
+        if (result.debug_error) {
+            console.error("BACKEND PYTHON ERROR:", result.debug_error);
+            alert("Backend Python Error:\n" + result.debug_error);
+        }
 
         
 
