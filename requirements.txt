@@ -1,0 +1,9 @@
+﻿fastapi
+uvicorn[standard]
+tensorflow-cpu==2.21.0
+librosa
+scikit-learn
+numpy
+pydantic
+python-multipart
+google-api-python-client
