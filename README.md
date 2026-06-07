@@ -191,4 +191,4 @@ Responsible for the core machine learning pipeline — including data preprocess
  
 ### 🎨 Parth Saxena
 Responsible for the frontend interface, and connecting the trained model with the detection pipeline for a seamless end-to-end experience.
----
+
