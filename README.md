@@ -179,7 +179,16 @@ To overcome speech emotion classification ambiguities (e.g., a sad voice reading
 Contributions are welcome! Please open an issue or submit a pull request if you want to add new features, fix bugs, or optimize model accuracy.
 
 ---
-
-## 📄 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+## 👥 Authors
+ 
+| Role | Name |
+|------|------|
+| 🧠 Backend & Model Training | **Atharva Shukla** |[@Atharv Shukla](https://github.com/atharvshukla76)
+| 🎨 Frontend Creation and Integration + Repo Maintainer | **Parth Saxena** |[@Parth Saxena](https://github.com/Kris-Zar)
+ 
+### 🧠 Atharva Shukla
+Responsible for the core machine learning pipeline — including data preprocessing, CNN model architecture design, training on the FER-2013 dataset, and backend inference logic.
+ 
+### 🎨 Parth Saxena
+Responsible for the frontend interface, and connecting the trained model with the detection pipeline for a seamless end-to-end experience.
+---
